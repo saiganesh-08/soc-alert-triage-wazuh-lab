@@ -1,0 +1,38 @@
+
+[
+  {
+    "timestamp": "2026-10-09T09:00:00Z",
+    "username": "alex",
+    "source_ip": "192.0.2.10",
+    "event_type": "authentication",
+    "outcome": "failure"
+  },
+  {
+    "timestamp": "2026-10-09T09:01:00Z",
+    "username": "alex",
+    "source_ip": "192.0.2.10",
+    "event_type": "authentication",
+    "outcome": "failure"
+  },
+  {
+    "timestamp": "2026-10-09T09:02:00Z",
+    "username": "alex",
+    "source_ip": "192.0.2.10",
+    "event_type": "authentication",
+    "outcome": "failure"
+  },
+  {
+    "timestamp": "2026-10-09T09:03:00Z",
+    "username": "alex",
+    "source_ip": "192.0.2.10",
+    "event_type": "authentication",
+    "outcome": "success"
+  },
+  {
+    "timestamp": "2026-10-09T09:05:00Z",
+    "username": "maria",
+    "source_ip": "192.0.2.25",
+    "event_type": "authentication",
+    "outcome": "success"
+  }
+]
