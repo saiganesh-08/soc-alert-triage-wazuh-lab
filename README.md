@@ -1,4 +1,3 @@
-
 # SOC Alert Triage & Security Monitoring Lab
 
 ## Overview
