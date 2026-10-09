@@ -2,7 +2,7 @@
 import argparse
 import json
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 
@@ -17,8 +17,23 @@ REQUIRED_FIELDS = {
 }
 
 
+def parse_timestamp(value):
+    if isinstance(value, datetime):
+        timestamp = value
+    elif isinstance(value, str):
+        timestamp = datetime.fromisoformat(
+            value.replace("Z", "+00:00")
+        )
+    else:
+        raise ValueError("Timestamp must be a string or datetime.")
+
+    if timestamp.tzinfo is None:
+        raise ValueError("Timestamp must include a timezone.")
+
+    return timestamp
+
+
 def load_events(file_path):
-    """Load JSON events and validate their structure."""
     try:
         with open(file_path, "r", encoding="utf-8") as file:
             data = json.load(file)
@@ -54,22 +69,17 @@ def load_events(file_path):
             isinstance(event[field], str) and event[field].strip()
             for field in REQUIRED_FIELDS
         ):
-            print(f"[INVALID] Event {index}: required fields must be non-empty strings.")
+            print(
+                f"[INVALID] Event {index}: required fields "
+                "must be non-empty strings."
+            )
             rejected += 1
             continue
 
         try:
-            timestamp = datetime.fromisoformat(
-                event["timestamp"].replace("Z", "+00:00")
-            )
-            if timestamp.tzinfo is None:
-                print(
-                    f"[INVALID] Event {index}: timestamp must include a timezone."
-                )
-                rejected += 1
-                continue
+            timestamp = parse_timestamp(event["timestamp"])
         except ValueError:
-            print(f"[INVALID] Event {index}: invalid timestamp.")
+            print(f"[INVALID] Event {index}: invalid or timezone-free timestamp.")
             rejected += 1
             continue
 
@@ -86,11 +96,11 @@ def load_events(file_path):
 
         valid_events.append(
             {
-                **event,
+                "timestamp": timestamp,
                 "username": event["username"].strip(),
                 "source_ip": event["source_ip"].strip(),
+                "event_type": "authentication",
                 "outcome": outcome,
-                "_timestamp": timestamp,
             }
         )
 
@@ -98,28 +108,30 @@ def load_events(file_path):
 
 
 def analyze_events(events, threshold=DEFAULT_THRESHOLD):
-    """Summarize authentication events and identify repeated failures."""
+    if threshold < 1:
+        raise ValueError("Threshold must be at least 1.")
+
     failures = Counter()
     successes = Counter()
     failure_details = defaultdict(list)
 
     for event in events:
         key = (event["username"], event["source_ip"])
+        timestamp = parse_timestamp(
+            event.get("_timestamp", event["timestamp"])
+        )
 
-        if event["outcome"] == "failure":
+        if event["outcome"].lower() == "failure":
             failures[key] += 1
-            failure_details[key].append(event)
-        else:
+            failure_details[key].append(timestamp)
+        elif event["outcome"].lower() == "success":
             successes[key] += 1
 
     findings = []
 
     for (username, source_ip), count in failures.items():
         if count >= threshold:
-            related_events = failure_details[(username, source_ip)]
-            timestamps = sorted(
-                event["_timestamp"] for event in related_events
-            )
+            timestamps = sorted(failure_details[(username, source_ip)])
 
             findings.append(
                 {
@@ -128,14 +140,15 @@ def analyze_events(events, threshold=DEFAULT_THRESHOLD):
                     "failed_attempts": count,
                     "first_seen": timestamps[0].isoformat(),
                     "last_seen": timestamps[-1].isoformat(),
-                    "successful_logins": successes[
-                        (username, source_ip)
-                    ],
+                    "successful_logins": successes[(username, source_ip)],
                     "severity": "MEDIUM",
                 }
             )
 
-    findings.sort(key=lambda item: item["failed_attempts"], reverse=True)
+    findings.sort(
+        key=lambda finding: finding["failed_attempts"],
+        reverse=True,
+    )
 
     return {
         "total_events": len(events),
@@ -146,7 +159,6 @@ def analyze_events(events, threshold=DEFAULT_THRESHOLD):
 
 
 def print_report(report, rejected, threshold):
-    """Print a readable SOC-style investigation summary."""
     print("\n" + "=" * 60)
     print("SOC AUTHENTICATION LOG ANALYSIS REPORT")
     print("=" * 60)
@@ -156,12 +168,14 @@ def print_report(report, rejected, threshold):
     print(f"Failed logins:         {report['failed_events']}")
     print(f"Failure threshold:     {threshold}")
 
-    if not report["findings"]:
+    findings = report["findings"]
+
+    if not findings:
         print("\nNo repeated-failure patterns met the configured threshold.")
     else:
-        print(f"\nFindings: {len(report['findings'])}")
+        print(f"\nFindings: {len(findings)}")
 
-        for number, finding in enumerate(report["findings"], start=1):
+        for number, finding in enumerate(findings, start=1):
             print(f"\n[ALERT {number}] Repeated authentication failures")
             print(f"  Severity:              {finding['severity']}")
             print(f"  Username:              {finding['username']}")
@@ -171,14 +185,14 @@ def print_report(report, rejected, threshold):
             print(f"  First observed:         {finding['first_seen']}")
             print(f"  Last observed:          {finding['last_seen']}")
             print("  Recommended next steps:")
-            print("    - Review the account and source IP context.")
+            print("    - Review account and source IP context.")
             print("    - Check surrounding authentication events.")
             print("    - Verify whether the activity is expected.")
             print("    - Escalate according to the approved playbook if suspicious.")
-            print("  Assessment: Pattern requires review; compromise is not confirmed.")
+            print("  Assessment: Review required; compromise is not confirmed.")
 
-    print("\nNote: This tool uses a simple count threshold, not a detection")
-    print("rule validated for production. Findings require analyst review.")
+    print("\nNote: This is a basic threshold-based detection.")
+    print("Findings require analyst review before response.")
     print("=" * 60)
 
 
@@ -197,6 +211,7 @@ def main():
         default=DEFAULT_THRESHOLD,
         help="Minimum failed attempts for a finding (default: 3).",
     )
+
     args = parser.parse_args()
 
     if args.threshold < 1:
@@ -204,10 +219,10 @@ def main():
 
     try:
         events, rejected = load_events(Path(args.input))
+        report = analyze_events(events, args.threshold)
     except ValueError as exc:
         parser.error(str(exc))
 
-    report = analyze_events(events, args.threshold)
     print_report(report, rejected, args.threshold)
 
 
